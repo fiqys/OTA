@@ -1,0 +1,51 @@
+name: Update OTA JSON on Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-ota:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Get release tag
+        id: tag
+        run: echo "TAG=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Download release zip
+        run: |
+          gh release download "${{ steps.tag.outputs.TAG }}" \
+            --pattern "*.zip" \
+            --dir /tmp/ota_zips
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run OTA generator
+        run: |
+          ZIP_FILE=$(ls /tmp/ota_zips/*.zip | head -n1)
+          echo "Using zip: $ZIP_FILE"
+          chmod +x generate_ota_json.sh
+          ./generate_ota_json.sh "$ZIP_FILE" --ci "${{ steps.tag.outputs.TAG }}"
+
+      - name: Commit updated builds/a55x.json
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add builds/a55x.json
+          git add changelogs/a55.txt 2>/dev/null || true
+
+          git diff --cached --quiet && echo "No changes to commit." && exit 0
+
+          git commit -m "OTA: update a55x.json for ${{ steps.tag.outputs.TAG }}"
+          git push origin ${{ github.event.repository.default_branch }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
